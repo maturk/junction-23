@@ -1,0 +1,66 @@
+<!doctype html>
+
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>WebGPU Life</title>
+    <style>
+        body {
+            height: 100%;
+            width: 100%;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 10;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 100%;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas width="100%" height="100%"></canvas>
+    <script type="module">
+        const canvas = document.querySelector("canvas");
+
+        if (!navigator.gpu) {
+            throw new Error("WebGPU not supported on this browser.");
+        }
+
+        const adapter = await navigator.gpu.requestAdapter();
+        const device = await adapter.requestDevice();
+        const context = canvas.getContext("webgpu");
+        const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+        context.configure({
+            device: device,
+            format: canvasFormat,
+        });
+
+        // GPUCommandEncoder provides an interface for recording GPU commands.
+        const encoder = device.createCommandEncoder();
+
+        const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+                view: context.getCurrentTexture().createView(),
+                loadOp: "clear",
+                clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
+                storeOp: "store",
+            }],
+        });
+        pass.end();
+        const commandBuffer = encoder.finish();
+
+        // the gpu queue performs all GPU commands
+        device.queue.submit([commandBuffer]);
+        device.queue.submit([encoder.finish()]);
+
+    </script>
+</body>
+
+</html>
