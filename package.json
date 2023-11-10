@@ -1,0 +1,23 @@
+{
+  "name": "junction-23",
+  "version": "1.0.0",
+  "description": "Junction hackathon repo",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "www-server": "npx http-server ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maturk/junction-23.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/maturk/junction-23/issues"
+  },
+  "homepage": "https://github.com/maturk/junction-23#readme",
+  "dependencies": {
+    "http-server": "^14.1.1"
+  }
+}
