@@ -43,7 +43,7 @@ const buf = device.createBuffer({
 device.queue.writeBuffer(buf, /*bufferOffset=*/0, vertices);
 
 
-const posOffsetArray = new Float32Array(AMOUNT*2);
+const posOffsetArray = new Float32Array(AMOUNT*(2+2+3));
 const posOffsetStorage = device.createBuffer({
     label: "Cell State",
     size: posOffsetArray.byteLength,
@@ -51,8 +51,19 @@ const posOffsetStorage = device.createBuffer({
   });
   
 
-for (let i = 0; i < posOffsetArray.length; i++) {
-    posOffsetArray[i] = Math.random()*2-1;
+for (let i = 0; i < posOffsetArray.length; i+=7) {
+    posOffsetArray[i] = Math.random()*2-1;   // X
+    posOffsetArray[i+1] = Math.random()*2-1; // Y
+
+    posOffsetArray[i+2] = (Math.random()*2-1)*0.01;   // Force to X
+    posOffsetArray[i+3] = (Math.random()*2-1)*0.01; // Force to Y
+
+    posOffsetArray[i+4] = Math.random();   // R
+    posOffsetArray[i+5] = Math.random();   // G
+    posOffsetArray[i+6] = Math.random();   // B
+
+
+
   }
   device.queue.writeBuffer(posOffsetStorage, 0, posOffsetArray);
   
@@ -77,24 +88,33 @@ const vertexBufferLayout = {
 const cellShaderModule = device.createShaderModule({
     label: "Cell shader",
     code: `
+        struct VertexOutput {
+            @builtin(position) pos: vec4f,
+            @location(0) color: vec4f,
+        };
+      
 
         @group(0) @binding(0) var<storage> posOffset: array<f32>;
+        
 
         @vertex
         fn vertexMain(@location(0) pos: vec2f,
-                    @builtin(instance_index) instance: u32) ->
-        @builtin(position) vec4f {
+                    @builtin(instance_index) instance: u32) -> VertexOutput {
         
-        let x = f32(posOffset[instance*2+1]);
-        let y = f32(posOffset[instance*2]);
-        
-        return vec4f(pos.x+x,pos.y+y, 0, 1);
+        let x = f32(posOffset[instance*7]);
+        let y = f32(posOffset[instance*7+1]);
+
+        var output : VertexOutput;
+        output.pos = vec4f(pos.x+x,pos.y+y, 0, 1);
+        output.color = vec4f(posOffset[instance*7+4],posOffset[instance*7+5],posOffset[instance*7+6],1);
+
+        return output;
         }
     
 
         @fragment
-        fn fragmentMain() -> @location(0) vec4f {
-        return vec4f(1, 0, 0, 1);
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+        return input.color;
         }
     `
 });
