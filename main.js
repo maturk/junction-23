@@ -70,7 +70,7 @@ const cellPipeline = device.createRenderPipeline({
 
 var points = [];
 for(let i = 0; i<100; i++){
-    points.push(new Point(-0.9+i*0.01, -0.9*i*0.01, 0.01));
+    points.push(new Point(Math.random() * 2 - 1,Math.random() * 2 - 1, 0.01));
     points[points.length-1].force = [Math.random()/100, Math.random()/100]
 }
 
