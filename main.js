@@ -67,8 +67,15 @@ const cellPipeline = device.createRenderPipeline({
 });
 
 
-var point = new Point(-0.9, -0.9, 0.1);
-point.force = [0.01, 0.02];
+
+var points = [];
+for(let i = 0; i<100; i++){
+    points.push(new Point(-0.9+i*0.01, -0.9*i*0.01, 0.01));
+    points[points.length-1].force = [Math.random()/100, Math.random()/100]
+}
+
+// var point = new Point(-0.9, -0.9, 0.1);
+// point.force = [0.01, 0.02];
 
 function draw(){
     // Start a render pass 
@@ -84,23 +91,26 @@ function draw(){
 
     // Draw the point
     pass.setPipeline(cellPipeline);
-    point.move(point.force[0], point.force[1]);
-    
-    if(point.x > 1-point.width || point.x < -1)
-        point.force[0] *= -1;
+    for(let point of points){
+        point.move(point.force[0], point.force[1]);
+        
+        if(point.x > 1-point.width || point.x < -1)
+            point.force[0] *= -1;
 
-    if(point.y > 1-point.width || point.y < -1)
-        point.force[1] *= -1;
+        if(point.y > 1-point.width || point.y < -1)
+            point.force[1] *= -1;
 
-    var pointVertices = point.allocateBuffer(device);
-    pass.setVertexBuffer(0, pointVertices);
-    pass.draw(point.vertices.length/2);
+        var pointVertices = point.allocateBuffer(device);
+        pass.setVertexBuffer(0, pointVertices);
+        pass.draw(point.vertices.length/2);
+    }
 
     // End the render pass and submit the command buffer
     pass.end();
     device.queue.submit([encoder.finish()]);
 
 }
+
 
 setInterval(draw, 1000/60);
 
