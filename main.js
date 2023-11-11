@@ -1,5 +1,4 @@
-const AMOUNT = 10000
-
+const AMOUNT = 10000;
 
 const canvas = document.querySelector("canvas");
 canvas.width = window.innerWidth;
@@ -42,19 +41,26 @@ device.queue.writeBuffer(buf, /*bufferOffset=*/0, vertices);
 
 
 const particleArray = new Float32Array(AMOUNT*(2+2+3));
-const particleStorage = device.createBuffer({
-    label: "Cell State",
+const particleStorage = [
+  device.createBuffer({
+    label: "Cell State A",
     size: particleArray.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
+  }),
+  device.createBuffer({
+    label: "Cell State B",
+    size: particleArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  })
+];
   
 
 for (let i = 0; i < particleArray.length; i+=7) {
     particleArray[i] = Math.random()*2-1;   // X
     particleArray[i+1] = Math.random()*2-1; // Y
 
-    particleArray[i+2] = (Math.random()*2-1)*0.01;   // Force to X
-    particleArray[i+3] = (Math.random()*2-1)*0.01; // Force to Y
+    particleArray[i+2] = (Math.random()*2-1)*0.001;   // Force to X
+    particleArray[i+3] = (Math.random()*2-1)*0.001; // Force to Y
 
     particleArray[i+4] = Math.random();   // R
     particleArray[i+5] = Math.random();   // G
@@ -63,8 +69,9 @@ for (let i = 0; i < particleArray.length; i+=7) {
 
 
   }
-  device.queue.writeBuffer(particleStorage, 0, particleArray);
-  
+  device.queue.writeBuffer(particleStorage[0], 0, particleArray);
+  device.queue.writeBuffer(particleStorage[1], 0, particleArray);
+
 
 
 
@@ -79,7 +86,23 @@ const vertexBufferLayout = {
     }],
 };
 
+const bindGroupLayout = device.createBindGroupLayout({
+  label: "Cell Bind Group Layout",
+  entries: [{
+    binding: 0,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+    buffer: { type: "read-only-storage"} // Cell state input buffer
+  }, {
+    binding: 1,
+    visibility: GPUShaderStage.COMPUTE,
+    buffer: { type: "storage"} // Cell state output buffer
+  }]
+});
 
+const pipelineLayout = device.createPipelineLayout({
+  label: "Cell Pipeline Layout",
+  bindGroupLayouts: [ bindGroupLayout ],
+});
 
 
 // our first webgpu shader
@@ -123,7 +146,7 @@ const cellShaderModule = device.createShaderModule({
 // pipeline object
 const cellPipeline = device.createRenderPipeline({
     label: "Cell pipeline",
-    layout: "auto",
+    layout: pipelineLayout,
     vertex: {
         module: cellShaderModule,
         entryPoint: "vertexMain",
@@ -140,30 +163,108 @@ const cellPipeline = device.createRenderPipeline({
 
 
 
+
+
+
+
+const simulationShaderModule = device.createShaderModule({
+  label: "Life simulation shader",
+  code: `
+
+    @group(0) @binding(0) var<storage> data: array<f32>;
+    @group(0) @binding(1) var<storage, read_write> out: array<f32>;
+
+
+    @compute @workgroup_size(64)
+    fn computeMain(@builtin(global_invocation_id) cell: vec3u) {
+
+      for(var index: u32 = 0; index < ${AMOUNT}; index++){
+
+        out[index*7] += out[index*7+2]; // add force to x
+        out[index*7+1] += out[index*7+3]; // add force to y
+
+      }
+      
+    }
+  `
+});
+
+const simulationPipeline = device.createComputePipeline({
+  label: "Simulation pipeline",
+  layout: pipelineLayout,
+  compute: {
+    module: simulationShaderModule,
+    entryPoint: "computeMain",
+  }
+});
+
+
+
+
+
 // Bind storage to shader
-const bindGroup = device.createBindGroup({
-    layout: cellPipeline.getBindGroupLayout(0),
-    entries: [
-    {
+// const bindGroup = device.createBindGroup({
+//     layout: cellPipeline.getBindGroupLayout(0),
+//     entries: [
+//     {
+//       binding: 0,
+//       resource: { buffer: particleStorage[0] }
+//     }],
+//   });
+
+
+const bindGroups = [
+  device.createBindGroup({
+    label: "Cell renderer bind group A",
+    layout: bindGroupLayout,
+    entries: [ {
       binding: 0,
-      resource: { buffer: particleStorage }
+      resource: { buffer: particleStorage[0] }
+    }, {
+      binding: 1,
+      resource: { buffer: particleStorage[1] }
     }],
-  });
+  }),
+  device.createBindGroup({
+    label: "Cell renderer bind group B",
+    layout: bindGroupLayout,
+    entries: [{
+      binding: 0,
+      resource: { buffer: particleStorage[1] }
+    }, {
+      binding: 1,
+      resource: { buffer: particleStorage[0] }
+    }],
+  }),
+];
+
 
   
 
 
   
 
-
+var step = 0;
 function draw(){
     // Start a render pass 
     const encoder = device.createCommandEncoder();
+
+
+    const computePass = encoder.beginComputePass();
+
+    computePass.setPipeline(simulationPipeline);
+    computePass.setBindGroup(0, bindGroups[step % 2]);
+    const workgroupCount = Math.ceil(1000/64); // Can be changed but chrome doesnt like it if its too high
+    computePass.dispatchWorkgroups(workgroupCount);
+    computePass.end();
+
+    step++;
+
     const pass = encoder.beginRenderPass({
     colorAttachments: [{
         view: context.getCurrentTexture().createView(),
         loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
+        clearValue: { r: 0, g: 0, b: 0, a: 1 }, // New line
         storeOp: "store",
         }],
     });
@@ -174,7 +275,7 @@ function draw(){
 
     pass.setVertexBuffer(0, buf);
 
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, bindGroups[step % 2]);
 
     pass.draw(vertices.length/2,AMOUNT); 
 
