@@ -1,28 +1,39 @@
-import {Point} from "./point.js"
+import { Point } from "./point.js"
+//import shaderWGSL from "./shader.wgsl"
 
-const canvas = document.querySelector("canvas");
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const canvas = document.querySelector("canvas")
+canvas.width = window.innerWidth
+canvas.height = window.innerHeight
 
 
 if (!navigator.gpu) {
     throw new Error("WebGPU not supported on this browser.");
 }
 
-const adapter = await navigator.gpu.requestAdapter();
-const device = await adapter.requestDevice();
-const context = canvas.getContext("webgpu");
-const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+const adapter = await navigator.gpu.requestAdapter()
+const device = await adapter.requestDevice()
+const context = canvas.getContext("webgpu")
+const canvasFormat = navigator.gpu.getPreferredCanvasFormat()
 context.configure({
     device: device,
     format: canvasFormat,
+})
+
+const num_points = 100;
+const data = new Float32Array(num_points * 2) // x,y
+for (let i = 0; i < 100; i++) {
+    data[i] = Math.random() * 2 - 1;
+}
+const dataBuffer = device.createBuffer({
+    label: "point locations",
+    size: data.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
+// move locations to gpu
+device.queue.writeBuffer(dataBuffer, /*bufferOffset=*/0, data);
 
-// GPUCommandEncoder provides an interface for recording GPU commands.
-const encoder = device.createCommandEncoder();
-
-// define how the vertex data is stored in memory so the gpu knows how to access it
-const vertexBufferLayout = {
+// tell gpu how locations are formatted in gpu
+const dataBufferLayout = {
     arrayStride: 8,
     attributes: [{
         format: "float32x2",
@@ -31,88 +42,125 @@ const vertexBufferLayout = {
     }],
 };
 
-// our first webgpu shader
-const cellShaderModule = device.createShaderModule({
-    label: "Cell shader",
-    code: `
-        @vertex
-        fn vertexMain(@location(0) pos: vec2f) ->
-        @builtin(position) vec4f {
-        return vec4f(pos.x,pos.y, 0, 1);
-        }
+const vertexBufferData = new Float32Array([
+    -0.01, -0.02,
+    0.01, -0.02,
+    0.0, 0.02,
+]);
 
-        @fragment
-        fn fragmentMain() -> @location(0) vec4f {
-        return vec4f(1, 0, 0, 1);
-        }
+const vertexBuffer = device.createBuffer({
+    size: vertexBufferData.byteLength,
+    usage: GPUBufferUsage.VERTEX,
+    mappedAtCreation: true,
+});
+
+new Float32Array(vertexBuffer.getMappedRange()).set(vertexBufferData);
+vertexBuffer.unmap();
+
+const shaderModule = device.createShaderModule({
+    code: `
+    struct VertexOutput {
+        @builtin(position) position : vec4<f32>
+        //@location(4) color : vec4<f32>,
+      }
+      
+      @vertex
+      fn vert_main(
+        @location(0) pos : vec2<f32>
+      ) -> VertexOutput {
+        let delta_pos = vec2(
+          (1.0),
+          (1.0)
+        );
+        
+        var output : VertexOutput;
+        output.position = vec4(delta_pos.x + pos.x, delta_pos.y +pos.y, 0.0, 1.0);
+        return output;
+      }
+      
+      @fragment
+      fn frag_main() -> @location(0) vec4<f32> {
+        return vec4(1.0, 0.0, 0.0, 1.0);
+      }
     `
 });
 
-// pipeline object
-const cellPipeline = device.createRenderPipeline({
-    label: "Cell pipeline",
-    layout: "auto",
+const renderPipeline = device.createRenderPipeline({
+    layout: 'auto',
     vertex: {
-        module: cellShaderModule,
-        entryPoint: "vertexMain",
-        buffers: [vertexBufferLayout]
+        module: shaderModule,
+        entryPoint: 'vert_main',
+        buffers: [
+            {
+                // instanced particles buffer
+                arrayStride: 2 * 4,
+                stepMode: 'instance',
+                attributes: [
+                    {
+                        // instance position
+                        shaderLocation: 0,
+                        offset: 0,
+                        format: 'float32x2',
+                    },
+                    //{
+                    //    // instance velocity
+                    //    shaderLocation: 1,
+                    //    offset: 2 * 4,
+                    //    format: 'float32x2',
+                    //},
+                ],
+            },
+            {
+                // vertex buffer
+                arrayStride: 2 * 4, //TODO: check this
+                stepMode: 'vertex',
+                attributes: [
+                    {
+                        // vertex positions
+                        shaderLocation: 2,
+                        offset: 0,
+                        format: 'float32x2',
+                    },
+                ],
+            },
+        ],
     },
     fragment: {
-        module: cellShaderModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-            format: canvasFormat
-        }]
-    }
+        module: shaderModule,
+        entryPoint: 'frag_main',
+        targets: [
+            {
+                format: canvasFormat,
+            },
+        ],
+    },
+    primitive: {
+        topology: 'triangle-list',
+    },
 });
 
 
-
-var points = [];
-for(let i = 0; i<100; i++){
-    points.push(new Point(Math.random() * 2 - 1,Math.random() * 2 - 1, 0.01));
-    points[points.length-1].force = [Math.random()/100, Math.random()/100]
-}
-
-// var point = new Point(-0.9, -0.9, 0.1);
-// point.force = [0.01, 0.02];
-
-function draw(){
+function draw() {
     // Start a render pass 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
-    colorAttachments: [{
-        view: context.getCurrentTexture().createView(),
-        loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
-        storeOp: "store",
+        colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
+            storeOp: "store",
         }],
     });
 
-    // Draw the point
-    pass.setPipeline(cellPipeline);
-    for(let point of points){
-        point.move(point.force[0], point.force[1]);
-        
-        if(point.x > 1-point.width || point.x < -1)
-            point.force[0] *= -1;
-
-        if(point.y > 1-point.width || point.y < -1)
-            point.force[1] *= -1;
-
-        var pointVertices = point.allocateBuffer(device);
-        pass.setVertexBuffer(0, pointVertices);
-        pass.draw(point.vertices.length/2);
-    }
+    // Draw the points
+    pass.setPipeline(renderPipeline);
+    pass.setVertexBuffer(0, dataBuffer);
+    pass.setVertexBuffer(1, vertexBuffer);
+    pass.draw(3, num_points, 0, 0);
 
     // End the render pass and submit the command buffer
     pass.end();
     device.queue.submit([encoder.finish()]);
-
 }
 
-
-setInterval(draw, 1000/60);
-
-
-
+setInterval(draw, 1000 / 60);
