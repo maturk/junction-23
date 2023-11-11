@@ -1,5 +1,4 @@
 import { Point } from "./point.js"
-//import shaderWGSL from "./shader.wgsl"
 
 const canvas = document.querySelector("canvas")
 canvas.width = window.innerWidth
@@ -11,7 +10,10 @@ if (!navigator.gpu) {
 }
 
 const adapter = await navigator.gpu.requestAdapter()
-const device = await adapter.requestDevice()
+const hasTimestampQuery = adapter.features.has('timestamp-query');
+const device = await adapter.requestDevice({
+    requiredFeatures: hasTimestampQuery ? ['timestamp-query'] : [],
+});
 const context = canvas.getContext("webgpu")
 const canvasFormat = navigator.gpu.getPreferredCanvasFormat()
 context.configure({
@@ -19,87 +21,49 @@ context.configure({
     format: canvasFormat,
 })
 
-const num_points = 100;
-const data = new Float32Array(num_points * 2) // x,y
-for (let i = 0; i < 100; i++) {
-    data[i] = Math.random() * 2 - 1;
-}
-
-const particleBuffers = new Array(2);
-for (let i = 0; i < 2; ++i) {
-    particleBuffers[i] = device.createBuffer({
-        size: data.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
-        mappedAtCreation: true,
-    });
-    new Float32Array(particleBuffers[i].getMappedRange()).set(
-        data
-    );
-    particleBuffers[i].unmap();
-}
-
-// tell gpu how locations are formatted in gpu
-const dataBufferLayout = {
-    arrayStride: 8,
-    attributes: [{
-        format: "float32x2",
-        offset: 0,
-        shaderLocation: 0, // Position, see vertex shader
-    }],
-};
-
-const vertexBufferData = new Float32Array([
-    -0.01, -0.02,
-    0.01, -0.02,
-    0.0, 0.02,
-]);
-
-const vertexBuffer = device.createBuffer({
-    size: vertexBufferData.byteLength,
-    usage: GPUBufferUsage.VERTEX,
-    mappedAtCreation: true,
-});
-
-new Float32Array(vertexBuffer.getMappedRange()).set(vertexBufferData);
-vertexBuffer.unmap();
-
-const shaderModule = device.createShaderModule({
+const spriteShaderModule = device.createShaderModule({
     code: `
     struct VertexOutput {
-        @builtin(position) position : vec4<f32>
-        //@location(4) color : vec4<f32>,
+        @builtin(position) position : vec4<f32>,
+        @location(4) color : vec4<f32>,
       }
       
-      @vertex
-      fn vert_main(
-        @location(0) pos : vec2<f32>
-      ) -> VertexOutput {
-        let delta_pos = vec2(
-          (1.0),
-          (1.0)
-        );
-        
-        var output : VertexOutput;
-        output.position = vec4(delta_pos.x + pos.x, delta_pos.y +pos.y, 0.0, 1.0);
-        return output;
-      }
-      
-      @fragment
-      fn frag_main() -> @location(0) vec4<f32> {
-        return vec4(1.0, 0.0, 0.0, 1.0);
-      }
+    @vertex
+    fn vert_main(
+    @location(0) a_particlePos : vec2<f32>,
+    @location(1) a_particleVel : vec2<f32>,
+    @location(2) a_pos : vec2<f32>
+    ) -> VertexOutput {
+
+    let angle = -atan2(a_particleVel.x, a_particleVel.y);
+    let pos = vec2(
+        (a_pos.x * cos(angle)) - (a_pos.y * sin(angle)),
+        (a_pos.x * sin(angle)) + (a_pos.y * cos(angle))
+    );
+    
+    var output : VertexOutput;
+    output.position = vec4(pos + a_particlePos, 0.0, 1.0);
+    output.color = vec4(1,0,0,0);
+    
+    return output;
+    }
+    
+    @fragment
+    fn frag_main(@location(4) color : vec4<f32>) -> @location(0) vec4<f32> {
+    return color;
+    }
     `
 });
 
 const renderPipeline = device.createRenderPipeline({
     layout: 'auto',
     vertex: {
-        module: shaderModule,
+        module: spriteShaderModule,
         entryPoint: 'vert_main',
         buffers: [
             {
                 // instanced particles buffer
-                arrayStride: 2 * 4,
+                arrayStride: 4 * 4,
                 stepMode: 'instance',
                 attributes: [
                     {
@@ -108,17 +72,17 @@ const renderPipeline = device.createRenderPipeline({
                         offset: 0,
                         format: 'float32x2',
                     },
-                    //{
-                    //    // instance velocity
-                    //    shaderLocation: 1,
-                    //    offset: 2 * 4,
-                    //    format: 'float32x2',
-                    //},
+                    {
+                        // instance velocity
+                        shaderLocation: 1,
+                        offset: 2 * 4,
+                        format: 'float32x2',
+                    },
                 ],
             },
             {
                 // vertex buffer
-                arrayStride: 2 * 4, //TODO: check this
+                arrayStride: 2 * 4,
                 stepMode: 'vertex',
                 attributes: [
                     {
@@ -132,7 +96,7 @@ const renderPipeline = device.createRenderPipeline({
         ],
     },
     fragment: {
-        module: shaderModule,
+        module: spriteShaderModule,
         entryPoint: 'frag_main',
         targets: [
             {
@@ -145,28 +109,282 @@ const renderPipeline = device.createRenderPipeline({
     },
 });
 
+const computePipeline = device.createComputePipeline({
+    layout: 'auto',
+    compute: {
+        module: device.createShaderModule({
+            code: `
+            struct Particle {
+                pos : vec2<f32>,
+                vel : vec2<f32>,
+              }
+              struct SimParams {
+                deltaT : f32,
+              }
+              struct Particles {
+                particles : array<Particle>,
+              }
+              @binding(0) @group(0) var<uniform> params : SimParams;
+              @binding(1) @group(0) var<storage, read> particlesA : Particles;
+              @binding(2) @group(0) var<storage, read_write> particlesB : Particles;
+              
+              @compute @workgroup_size(64)
+              fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
+                var index = GlobalInvocationID.x;
+              
+                var vPos = particlesA.particles[index].pos;
+                var vVel = particlesA.particles[index].vel;
+                var pos : vec2<f32>;
+                var vel : vec2<f32>;
+              
+                for (var i = 0u; i < arrayLength(&particlesA.particles); i++) {
+                  if (i == index) {
+                    continue;
+                  }
+              
+                  pos = particlesA.particles[i].pos.xy;
+                  vel = particlesA.particles[i].vel.xy;
+                }
+              
+                // clamp velocity for a more pleasing simulation
+                vVel = normalize(vVel) * clamp(length(vVel), 0.0, 0.1);
+                
+                // kinematic update
+                vPos = vPos + (vVel * params.deltaT);
 
-function draw() {
-    // Start a render pass 
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-            view: context.getCurrentTexture().createView(),
-            loadOp: "clear",
-            clearValue: { r: 0, g: 0, b: 0.4, a: 1 },
-            storeOp: "store",
-        }],
+                // Wrap around boundary
+                if (vPos.x < -1.0) {
+                  vPos.x = 1.0;
+                }
+                if (vPos.x > 1.0) {
+                  vPos.x = -1.0;
+                }
+                if (vPos.y < -1.0) {
+                  vPos.y = 1.0;
+                }
+                if (vPos.y > 1.0) {
+                  vPos.y = -1.0;
+                }
+                // Write back
+                particlesB.particles[index].pos = vPos;
+                particlesB.particles[index].vel = vVel;
+              }
+        `,
+        }),
+        entryPoint: 'main',
+    },
+});
+
+const renderPassDescriptor = {
+    colorAttachments: [
+        {
+            view: context.getCurrentTexture().createView(), // Assigned later
+            clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+        },
+    ],
+};
+
+const computePassDescriptor = {};
+
+/** Storage for timestamp query results */
+let querySet = undefined;
+/** Timestamps are resolved into this buffer */
+let resolveBuffer = undefined;
+/** Pool of spare buffers for MAP_READing the timestamps back to CPU. A buffer
+ * is taken from the pool (if available) when a readback is needed, and placed
+ * back into the pool once the readback is done and it's unmapped. */
+const spareResultBuffers = [];
+
+if (hasTimestampQuery) {
+    querySet = device.createQuerySet({
+        type: 'timestamp',
+        count: 4,
     });
-
-    // Draw the points
-    pass.setPipeline(renderPipeline);
-    pass.setVertexBuffer(0, particleBuffers[1]);
-    pass.setVertexBuffer(1, vertexBuffer);
-    pass.draw(3, num_points, 0, 0);
-
-    // End the render pass and submit the command buffer
-    pass.end();
-    device.queue.submit([encoder.finish()]);
+    resolveBuffer = device.createBuffer({
+        size: 4 * BigInt64Array.BYTES_PER_ELEMENT,
+        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    computePassDescriptor.timestampWrites = {
+        querySet,
+        beginningOfPassWriteIndex: 0,
+        endOfPassWriteIndex: 1,
+    };
+    renderPassDescriptor.timestampWrites = {
+        querySet,
+        beginningOfPassWriteIndex: 2,
+        endOfPassWriteIndex: 3,
+    };
 }
 
-setInterval(draw, 1000 / 60);
+const vertexBufferData = new Float32Array([
+    -0.01, -0.02, 0.01,
+    -0.02, 0.0, 0.02,
+]);
+
+const spriteVertexBuffer = device.createBuffer({
+    size: vertexBufferData.byteLength,
+    usage: GPUBufferUsage.VERTEX,
+    mappedAtCreation: true,
+});
+new Float32Array(spriteVertexBuffer.getMappedRange()).set(vertexBufferData);
+spriteVertexBuffer.unmap();
+
+const simParams = {
+    deltaT: 0.0001,
+};
+
+const simParamBufferSize = 1 * Float32Array.BYTES_PER_ELEMENT;
+const simParamBuffer = device.createBuffer({
+    size: simParamBufferSize,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+function updateSimParams() {
+    device.queue.writeBuffer(
+        simParamBuffer,
+        0,
+        new Float32Array([
+            simParams.deltaT,
+        ])
+    );
+}
+updateSimParams();
+
+
+const numParticles = 100;
+
+const initialParticleData = new Float32Array(numParticles * 4);
+for (let i = 0; i < numParticles; ++i) {
+    initialParticleData[4 * i + 0] = 2 * (Math.random() - 0.5); // x
+    initialParticleData[4 * i + 1] = 2 * (Math.random() - 0.5); // y
+    initialParticleData[4 * i + 2] = 0.1; // vel x
+    initialParticleData[4 * i + 3] = 0.1; // vel y
+}
+
+const particleBuffers = new Array(2);
+const particleBindGroups = new Array(2);
+for (let i = 0; i < 2; ++i) {
+    particleBuffers[i] = device.createBuffer({
+        size: initialParticleData.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
+        mappedAtCreation: true,
+    });
+    new Float32Array(particleBuffers[i].getMappedRange()).set(
+        initialParticleData
+    );
+    particleBuffers[i].unmap();
+}
+
+for (let i = 0; i < 2; ++i) {
+    particleBindGroups[i] = device.createBindGroup({
+        layout: computePipeline.getBindGroupLayout(0),
+        entries: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: simParamBuffer,
+                },
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: particleBuffers[i],
+                    offset: 0,
+                    size: initialParticleData.byteLength,
+                },
+            },
+            {
+                binding: 2,
+                resource: {
+                    buffer: particleBuffers[(i + 1) % 2],
+                    offset: 0,
+                    size: initialParticleData.byteLength,
+                },
+            },
+        ],
+    });
+}
+
+let t = 0;
+let computePassDurationSum = 0;
+let renderPassDurationSum = 0;
+
+function frame() {
+    // Sample is no longer the active page.
+    renderPassDescriptor.colorAttachments[0].view = context
+        .getCurrentTexture()
+        .createView();
+
+    const commandEncoder = device.createCommandEncoder();
+    {
+        const passEncoder = commandEncoder.beginComputePass(
+            computePassDescriptor
+        );
+        passEncoder.setPipeline(computePipeline);
+        passEncoder.setBindGroup(0, particleBindGroups[t % 2]);
+        passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+        passEncoder.end();
+    }
+    {
+        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+        passEncoder.setPipeline(renderPipeline);
+        passEncoder.setVertexBuffer(0, particleBuffers[(t + 1) % 2]);
+        passEncoder.setVertexBuffer(1, spriteVertexBuffer);
+        passEncoder.draw(3, numParticles, 0, 0);
+        passEncoder.end();
+    }
+
+    let resultBuffer = undefined;
+    if (hasTimestampQuery) {
+        resultBuffer =
+            spareResultBuffers.pop() ||
+            device.createBuffer({
+                size: 4 * BigInt64Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+        commandEncoder.resolveQuerySet(querySet, 0, 4, resolveBuffer, 0);
+        commandEncoder.copyBufferToBuffer(
+            resolveBuffer,
+            0,
+            resultBuffer,
+            0,
+            resultBuffer.size
+        );
+    }
+
+    device.queue.submit([commandEncoder.finish()]);
+
+    if (hasTimestampQuery) {
+        resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+            const times = new BigInt64Array(resultBuffer.getMappedRange());
+            computePassDurationSum += Number(times[1] - times[0]);
+            renderPassDurationSum += Number(times[3] - times[2]);
+            resultBuffer.unmap();
+
+            // Periodically update the text for the timer stats
+            const kNumTimerSamples = 100;
+            if (t % kNumTimerSamples === 0) {
+                const avgComputeMicroseconds = Math.round(
+                    computePassDurationSum / kNumTimerSamples / 1000
+                );
+                const avgRenderMicroseconds = Math.round(
+                    renderPassDurationSum / kNumTimerSamples / 1000
+                );
+                perfDisplay.textContent = `\
+avg compute pass duration: ${avgComputeMicroseconds}µs
+avg render pass duration: ${avgRenderMicroseconds}µs
+spare readback buffers: ${spareResultBuffers.length}`;
+                computePassDurationSum = 0;
+                renderPassDurationSum = 0;
+            }
+            spareResultBuffers.push(resultBuffer);
+        });
+    }
+
+    ++t;
+    requestAnimationFrame(frame);
+};
+
+setInterval(frame, 1 / 60);
