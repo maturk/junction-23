@@ -8,6 +8,7 @@ export class Point{
         this.x = x
         this.y = y
         this.width = width
+        this.force = [0,0]
 
         this.setVertices(x,y,width)
 

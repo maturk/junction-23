@@ -4,6 +4,7 @@ const canvas = document.querySelector("canvas");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
+
 if (!navigator.gpu) {
     throw new Error("WebGPU not supported on this browser.");
 }
@@ -66,8 +67,8 @@ const cellPipeline = device.createRenderPipeline({
 });
 
 
-
-var point = new Point(-0.9, -0.9, 0.3);
+var point = new Point(-0.9, -0.9, 0.1);
+point.force = [0.01, 0.02];
 
 function draw(){
     // Start a render pass 
@@ -83,13 +84,13 @@ function draw(){
 
     // Draw the point
     pass.setPipeline(cellPipeline);
-    point.move(0.1, 0.01);
+    point.move(point.force[0], point.force[1]);
     
-    if(point.x > 1)
-        point.x = -1;
+    if(point.x > 1-point.width || point.x < -1)
+        point.force[0] *= -1;
 
-    if(point.y > 1)
-        point.y = -1;
+    if(point.y > 1-point.width || point.y < -1)
+        point.force[1] *= -1;
 
     var pointVertices = point.allocateBuffer(device);
     pass.setVertexBuffer(0, pointVertices);
