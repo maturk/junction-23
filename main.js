@@ -1,4 +1,4 @@
-const AMOUNT = 10000;
+const AMOUNT = 10000; // Amount of particles (50k was the highest we could go without lag. Limit depends on your hardware)
 
 const canvas = document.querySelector("canvas");
 canvas.width = window.innerWidth;
@@ -9,6 +9,7 @@ if (!navigator.gpu) {
     throw new Error("WebGPU not supported on this browser.");
 }
 
+// Init webgpu for canvas
 const adapter = await navigator.gpu.requestAdapter();
 const device = await adapter.requestDevice();
 const context = canvas.getContext("webgpu");
@@ -21,7 +22,7 @@ context.configure({
 // GPUCommandEncoder provides an interface for recording GPU commands.
 const encoder = device.createCommandEncoder();
 
-
+// Basic rectangle vertices
 const vertices = new Float32Array([
     //   X,    Y,
     0, 0,
@@ -33,6 +34,8 @@ const vertices = new Float32Array([
     0, 0.005,
 ]); 
 
+
+// Create a vertex buffer
 const buf = device.createBuffer({
     size: vertices.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -41,14 +44,15 @@ device.queue.writeBuffer(buf, /*bufferOffset=*/0, vertices);
 
 
 const particleArray = new Float32Array(AMOUNT*(2+2+3));
+// Storage needs 2 arrays, 1 to be read, 1 to be written to
 const particleStorage = [
   device.createBuffer({
-    label: "Cell State A",
+    label: "Particle array #1",
     size: particleArray.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
   device.createBuffer({
-    label: "Cell State B",
+    label: "Particle array #2",
     size: particleArray.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   })
@@ -56,17 +60,12 @@ const particleStorage = [
   
 
 
-var angleInc = Math.PI*2/AMOUNT;
-
+// Fill particleArray with data to create a fun snowfall effect
 for (let i = 0; i < particleArray.length; i+=7) {
 
     particleArray[i] = Math.random()*2-1;   // X
     particleArray[i+1] = ((Math.random()*2+1)); // Y
-    // particleArray[i] = Math.cos(angleInc*i)*(window.innerHeight/window.innerWidth)*0.5;   // X
-    // particleArray[i+1] = Math.sin(angleInc*i)*0.5; // Y
 
-    // particleArray[i+2] = 0;   // Force to X
-    // particleArray[i+3] = 0; // Force to Y
     particleArray[i+2] = (Math.random()*0.5)*0.0001;   // Force to X
     particleArray[i+3] = -0.00005*(Math.random()+1); // Force to Y
 
@@ -94,28 +93,33 @@ const vertexBufferLayout = {
     }],
 };
 
+
+// Layout for bind groups 1st item is read only, 2nd is writable
 const bindGroupLayout = device.createBindGroupLayout({
-  label: "Cell Bind Group Layout",
+  label: "Particle Bind Group Layout",
   entries: [{
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-    buffer: { type: "read-only-storage"} // Cell state input buffer
+    buffer: { type: "read-only-storage"} // Read-only particle data
   }, {
     binding: 1,
     visibility: GPUShaderStage.COMPUTE,
-    buffer: { type: "storage"} // Cell state output buffer
+    buffer: { type: "storage"} // Read-write buffer
   }]
 });
 
+
+// Define layout for pipeline
 const pipelineLayout = device.createPipelineLayout({
-  label: "Cell Pipeline Layout",
+  label: "Particle Pipeline Layout",
   bindGroupLayouts: [ bindGroupLayout ],
 });
 
 
-// our first webgpu shader
-const cellShaderModule = device.createShaderModule({
-    label: "Cell shader",
+// Pipeline for render pass
+// Buffer is being rendered here
+const particleShaderModule = device.createShaderModule({
+    label: "Particle shader",
     code: `
         struct VertexOutput {
             @builtin(position) pos: vec4f,
@@ -152,16 +156,16 @@ const cellShaderModule = device.createShaderModule({
 
 
 // pipeline object
-const cellPipeline = device.createRenderPipeline({
-    label: "Cell pipeline",
+const particlePipeline = device.createRenderPipeline({
+    label: "Particle pipeline",
     layout: pipelineLayout,
     vertex: {
-        module: cellShaderModule,
+        module: particleShaderModule,
         entryPoint: "vertexMain",
         buffers: [vertexBufferLayout]
     },
     fragment: {
-        module: cellShaderModule,
+        module: particleShaderModule,
         entryPoint: "fragmentMain",
         targets: [{
             format: canvasFormat
@@ -174,9 +178,10 @@ const cellPipeline = device.createRenderPipeline({
 
 
 
-
+// Pipeline for compute pass
+// Buffer data is modified here
 const simulationShaderModule = device.createShaderModule({
-  label: "Life simulation shader",
+  label: "Snowfall simulation shader",
   code: `
 
     @group(0) @binding(0) var<storage> data: array<f32>;
@@ -211,6 +216,7 @@ const simulationShaderModule = device.createShaderModule({
   `
 });
 
+// Simulation pipeline object
 const simulationPipeline = device.createComputePipeline({
   label: "Simulation pipeline",
   layout: pipelineLayout,
@@ -224,20 +230,10 @@ const simulationPipeline = device.createComputePipeline({
 
 
 
-// Bind storage to shader
-// const bindGroup = device.createBindGroup({
-//     layout: cellPipeline.getBindGroupLayout(0),
-//     entries: [
-//     {
-//       binding: 0,
-//       resource: { buffer: particleStorage[0] }
-//     }],
-//   });
-
-
+// 2 bind groups which are switched every frame. At the compute pass particle storage is edited and during render pass the data is rendered
 const bindGroups = [
   device.createBindGroup({
-    label: "Cell renderer bind group A",
+    label: "Particle storate bind group #1",
     layout: bindGroupLayout,
     entries: [ {
       binding: 0,
@@ -248,7 +244,7 @@ const bindGroups = [
     }],
   }),
   device.createBindGroup({
-    label: "Cell renderer bind group B",
+    label: "Particle storate bind group #2",
     layout: bindGroupLayout,
     entries: [{
       binding: 0,
@@ -266,12 +262,14 @@ const bindGroups = [
 
   
 
-var step = 0;
+var step = 0; // Step is used to switch between the bind groups
+
+// Rendering function, is called upon 60 times a second
 function draw(){
-    // Start a render pass 
     const encoder = device.createCommandEncoder();
 
 
+    // Compute pass, particle data is edited here.
     const computePass = encoder.beginComputePass();
 
     computePass.setPipeline(simulationPipeline);
@@ -282,18 +280,19 @@ function draw(){
 
     step++;
 
+    // Render pass
     const pass = encoder.beginRenderPass({
     colorAttachments: [{
         view: context.getCurrentTexture().createView(),
         loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0, a: 1 }, // New line
+        clearValue: { r: 0, g: 0, b: 0, a: 1 }, // Set background color of scene
         storeOp: "store",
         }],
     });
 
     
     // Draw
-    pass.setPipeline(cellPipeline);    
+    pass.setPipeline(particlePipeline);    
 
     pass.setVertexBuffer(0, buf);
 
@@ -308,30 +307,4 @@ function draw(){
 }
 
 
-setInterval(draw, 1000/60);
-
-
-
-// canvas.addEventListener("click",(ev) => {
-
-//   let x = ev.offsetX/window.innerWidth*2 -1;
-//   let y = ev.offsetY/window.innerHeight*2 -1;
-  
-//   for (let i = 0; i < particleArray.length; i+=7) {
-
-//     // particleArray[i+2] = (Math.random()*2-1)*0.001;   // Force to X
-//     // particleArray[i+3] = (Math.random()*2-1)*0.001; // Force to Y
-//     var dx = x - particleArray[i];
-//     var dy = y - particleArray[i+1]; 
-
-//     particleArray[i+2] -= (dx)*0.001;   // Force to X
-//     particleArray[i+3] -= (dy)*0.001; // Force to Y
-
-
-
-//   }
-//   device.queue.writeBuffer(particleStorage[0], 0, particleArray);
-//   device.queue.writeBuffer(particleStorage[1], 0, particleArray);
-
-
-// });
+setInterval(draw, 1000/60); // Call 60 times a sec
