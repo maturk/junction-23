@@ -60,19 +60,19 @@ var angleInc = Math.PI*2/AMOUNT;
 
 for (let i = 0; i < particleArray.length; i+=7) {
 
-    particleArray[i] = Math.random()*2-1;   // X
-    particleArray[i+1] = ((Math.random()*2+1)); // Y
+    particleArray[i] = Math.random()*3-1.5;   // X
+    particleArray[i+1] = Math.random()*3-1.5; // Y
     // particleArray[i] = Math.cos(angleInc*i)*(window.innerHeight/window.innerWidth)*0.5;   // X
     // particleArray[i+1] = Math.sin(angleInc*i)*0.5; // Y
 
     // particleArray[i+2] = 0;   // Force to X
     // particleArray[i+3] = 0; // Force to Y
-    particleArray[i+2] = (Math.random()*0.5)*0.0001;   // Force to X
-    particleArray[i+3] = -0.00005*(Math.random()+1); // Force to Y
+    particleArray[i+2] = 0;   // Force to X
+    particleArray[i+3] = 0; // Force to Y
 
-    particleArray[i+4] = 1;   // R
-    particleArray[i+5] = 1;   // G
-    particleArray[i+6] = 1; // B
+    particleArray[i+4] = Math.random();   // R
+    particleArray[i+5] = Math.random();   // G
+    particleArray[i+6] = Math.random(); // B
 
 
 
@@ -191,18 +191,10 @@ const simulationShaderModule = device.createShaderModule({
         out[index*7] += out[index*7+2]; // add force to x
         out[index*7+1] += out[index*7+3]; // add force to y
 
-        //out[index*7+2] += cos(6.28*f32(index)*out[index*7+2]);
-        //out[index*7+3] = -0.00008;
-        
-
-
-        if(out[index*7] > 1 || out[index*7]<-1){
-          out[index*7] = -1;
-        }
-
-        if(out[index*7+1] < -1){
-          out[index*7+1] = 1;
-        }
+        var angle: f32 = f32(index)*6.24*0.0001;
+        out[index*7+2] = (1*${window.innerHeight/window.innerWidth}*0.5*sin(angle)*cos(angle)-out[index*7+0])*0.001;
+        out[index*7+3] = (-0.2 +1*0.5*sin(angle)*sin(angle)-out[index*7+1])*0.001;
+      
 
 
       }
