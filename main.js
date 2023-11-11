@@ -1,5 +1,3 @@
-import {Point} from "./point.js"
-
 const AMOUNT = 10000
 
 
@@ -170,9 +168,9 @@ function draw(){
         }],
     });
 
-    // Draw the point
-
-    pass.setPipeline(cellPipeline);
+    
+    // Draw
+    pass.setPipeline(cellPipeline);    
 
     pass.setVertexBuffer(0, buf);
 
