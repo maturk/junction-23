@@ -4,7 +4,6 @@ const canvas = document.querySelector("canvas")
 canvas.width = window.innerWidth
 canvas.height = window.innerHeight
 
-
 if (!navigator.gpu) {
     throw new Error("WebGPU not supported on this browser.");
 }
@@ -20,6 +19,11 @@ context.configure({
     device: device,
     format: canvasFormat,
 })
+
+const numParticles = 50000;
+const simParams = {
+    deltaT: 20,
+};
 
 const spriteShaderModule = device.createShaderModule({
     code: `
@@ -127,7 +131,8 @@ const computePipeline = device.createComputePipeline({
               @binding(0) @group(0) var<uniform> params : SimParams;
               @binding(1) @group(0) var<storage, read> particlesA : Particles;
               @binding(2) @group(0) var<storage, read_write> particlesB : Particles;
-              
+              @group(0) @binding(3) var<uniform> click: vec2f;
+
               @compute @workgroup_size(64)
               fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
                 var index = GlobalInvocationID.x;
@@ -154,16 +159,20 @@ const computePipeline = device.createComputePipeline({
 
                 // Wrap around boundary
                 if (vPos.x < -1.0) {
-                  vPos.x = 1.0;
+                  //vPos.x = 1.0;
+                  vVel.x = -vVel.x;
                 }
                 if (vPos.x > 1.0) {
-                  vPos.x = -1.0;
+                  //vPos.x = -1.0;
+                  vVel.x = -vVel.x;
                 }
                 if (vPos.y < -1.0) {
-                  vPos.y = 1.0;
+                  //vPos.y = 1.0;
+                  vVel.y = -vVel.y;
                 }
                 if (vPos.y > 1.0) {
-                  vPos.y = -1.0;
+                  //vPos.y = -1.0;
+                  vVel.y = -vVel.y;
                 }
                 // Write back
                 particlesB.particles[index].pos = vPos;
@@ -219,8 +228,16 @@ if (hasTimestampQuery) {
 }
 
 const vertexBufferData = new Float32Array([
-    -0.01, -0.02, 0.01,
-    -0.02, 0.0, 0.02,
+    //-0.01, -0.02,
+    //0.01, -0.02,
+    //0.0, 0.02,
+    0, 0,
+    0.01, 0,
+    0.01, 0.01,
+
+    0, 0,
+    0.01, 0.01,
+    0, 0.01,
 ]);
 
 const spriteVertexBuffer = device.createBuffer({
@@ -230,10 +247,6 @@ const spriteVertexBuffer = device.createBuffer({
 });
 new Float32Array(spriteVertexBuffer.getMappedRange()).set(vertexBufferData);
 spriteVertexBuffer.unmap();
-
-const simParams = {
-    deltaT: 0.0001,
-};
 
 const simParamBufferSize = 1 * Float32Array.BYTES_PER_ELEMENT;
 const simParamBuffer = device.createBuffer({
@@ -252,15 +265,12 @@ function updateSimParams() {
 }
 updateSimParams();
 
-
-const numParticles = 100;
-
 const initialParticleData = new Float32Array(numParticles * 4);
 for (let i = 0; i < numParticles; ++i) {
     initialParticleData[4 * i + 0] = 2 * (Math.random() - 0.5); // x
     initialParticleData[4 * i + 1] = 2 * (Math.random() - 0.5); // y
-    initialParticleData[4 * i + 2] = 0.1; // vel x
-    initialParticleData[4 * i + 3] = 0.1; // vel y
+    initialParticleData[4 * i + 2] = 0.001; // vel x
+    initialParticleData[4 * i + 3] = 0.001; // vel y
 }
 
 const particleBuffers = new Array(2);
@@ -311,8 +321,23 @@ let t = 0;
 let computePassDurationSum = 0;
 let renderPassDurationSum = 0;
 
+// canvas click buffer
+const click = new Float32Array([0.0, 0.0]);
+const clickBuffer = device.createBuffer({
+    label: "Grid Uniforms",
+    size: click.byteLength,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+canvas.addEventListener("click", (ev) => {
+    let x = ev.offsetX / window.innerWidth * 2 - 1;
+    let y = ev.offsetY / window.innerHeight * 2 - 1;
+    click.x = x;
+    click.y = y;
+    device.queue.writeBuffer(clickBuffer, 0, click);
+});
+
 function frame() {
-    // Sample is no longer the active page.
     renderPassDescriptor.colorAttachments[0].view = context
         .getCurrentTexture()
         .createView();
@@ -332,59 +357,15 @@ function frame() {
         passEncoder.setPipeline(renderPipeline);
         passEncoder.setVertexBuffer(0, particleBuffers[(t + 1) % 2]);
         passEncoder.setVertexBuffer(1, spriteVertexBuffer);
-        passEncoder.draw(3, numParticles, 0, 0);
+        //passEncoder.draw(3, numParticles, 0, 0);
+        passEncoder.draw(6, numParticles, 0, 0);
         passEncoder.end();
-    }
-
-    let resultBuffer = undefined;
-    if (hasTimestampQuery) {
-        resultBuffer =
-            spareResultBuffers.pop() ||
-            device.createBuffer({
-                size: 4 * BigInt64Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-            });
-        commandEncoder.resolveQuerySet(querySet, 0, 4, resolveBuffer, 0);
-        commandEncoder.copyBufferToBuffer(
-            resolveBuffer,
-            0,
-            resultBuffer,
-            0,
-            resultBuffer.size
-        );
     }
 
     device.queue.submit([commandEncoder.finish()]);
 
-    if (hasTimestampQuery) {
-        resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-            const times = new BigInt64Array(resultBuffer.getMappedRange());
-            computePassDurationSum += Number(times[1] - times[0]);
-            renderPassDurationSum += Number(times[3] - times[2]);
-            resultBuffer.unmap();
-
-            // Periodically update the text for the timer stats
-            const kNumTimerSamples = 100;
-            if (t % kNumTimerSamples === 0) {
-                const avgComputeMicroseconds = Math.round(
-                    computePassDurationSum / kNumTimerSamples / 1000
-                );
-                const avgRenderMicroseconds = Math.round(
-                    renderPassDurationSum / kNumTimerSamples / 1000
-                );
-                perfDisplay.textContent = `\
-avg compute pass duration: ${avgComputeMicroseconds}µs
-avg render pass duration: ${avgRenderMicroseconds}µs
-spare readback buffers: ${spareResultBuffers.length}`;
-                computePassDurationSum = 0;
-                renderPassDurationSum = 0;
-            }
-            spareResultBuffers.push(resultBuffer);
-        });
-    }
-
     ++t;
-    requestAnimationFrame(frame);
+    //requestAnimationFrame(frame);
 };
 
-setInterval(frame, 1 / 60);
+setInterval(frame, 2000 / 60);
