@@ -1,5 +1,8 @@
 import {Point} from "./point.js"
 
+const AMOUNT = 10000
+
+
 const canvas = document.querySelector("canvas");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -21,6 +24,42 @@ context.configure({
 // GPUCommandEncoder provides an interface for recording GPU commands.
 const encoder = device.createCommandEncoder();
 
+
+const vertices = new Float32Array([
+    //   X,    Y,
+    0, 0,
+    0.01, 0,
+    0.01, 0.01,
+
+    0, 0,
+    0.01, 0.01,
+    0, 0.01,
+]); 
+
+const buf = device.createBuffer({
+    size: vertices.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+});
+device.queue.writeBuffer(buf, /*bufferOffset=*/0, vertices);
+
+
+const posOffsetArray = new Float32Array(AMOUNT*2);
+const posOffsetStorage = device.createBuffer({
+    label: "Cell State",
+    size: posOffsetArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  
+
+for (let i = 0; i < posOffsetArray.length; i++) {
+    posOffsetArray[i] = Math.random()*2-1;
+  }
+  device.queue.writeBuffer(posOffsetStorage, 0, posOffsetArray);
+  
+
+
+
+
 // define how the vertex data is stored in memory so the gpu knows how to access it
 const vertexBufferLayout = {
     arrayStride: 8,
@@ -31,15 +70,27 @@ const vertexBufferLayout = {
     }],
 };
 
+
+
+
 // our first webgpu shader
 const cellShaderModule = device.createShaderModule({
     label: "Cell shader",
     code: `
+
+        @group(0) @binding(0) var<storage> posOffset: array<f32>;
+
         @vertex
-        fn vertexMain(@location(0) pos: vec2f) ->
+        fn vertexMain(@location(0) pos: vec2f,
+                    @builtin(instance_index) instance: u32) ->
         @builtin(position) vec4f {
-        return vec4f(pos.x,pos.y, 0, 1);
+        
+        let x = f32(posOffset[instance*2+1]);
+        let y = f32(posOffset[instance*2]);
+        
+        return vec4f(pos.x+x,pos.y+y, 0, 1);
         }
+    
 
         @fragment
         fn fragmentMain() -> @location(0) vec4f {
@@ -47,6 +98,9 @@ const cellShaderModule = device.createShaderModule({
         }
     `
 });
+
+
+
 
 // pipeline object
 const cellPipeline = device.createRenderPipeline({
@@ -68,14 +122,21 @@ const cellPipeline = device.createRenderPipeline({
 
 
 
-var points = [];
-for(let i = 0; i<100; i++){
-    points.push(new Point(Math.random() * 2 - 1,Math.random() * 2 - 1, 0.01));
-    points[points.length-1].force = [Math.random()/100, Math.random()/100]
-}
+// Bind storage to shader
+const bindGroup = device.createBindGroup({
+    layout: cellPipeline.getBindGroupLayout(0),
+    entries: [
+    {
+      binding: 0,
+      resource: { buffer: posOffsetStorage }
+    }],
+  });
 
-// var point = new Point(-0.9, -0.9, 0.1);
-// point.force = [0.01, 0.02];
+  
+
+
+  
+
 
 function draw(){
     // Start a render pass 
@@ -90,20 +151,14 @@ function draw(){
     });
 
     // Draw the point
+
     pass.setPipeline(cellPipeline);
-    for(let point of points){
-        point.move(point.force[0], point.force[1]);
-        
-        if(point.x > 1-point.width || point.x < -1)
-            point.force[0] *= -1;
 
-        if(point.y > 1-point.width || point.y < -1)
-            point.force[1] *= -1;
+    pass.setVertexBuffer(0, buf);
 
-        var pointVertices = point.allocateBuffer(device);
-        pass.setVertexBuffer(0, pointVertices);
-        pass.draw(point.vertices.length/2);
-    }
+    pass.setBindGroup(0, bindGroup);
+
+    pass.draw(vertices.length/2,AMOUNT); 
 
     // End the render pass and submit the command buffer
     pass.end();
