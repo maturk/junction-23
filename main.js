@@ -25,12 +25,12 @@ const encoder = device.createCommandEncoder();
 const vertices = new Float32Array([
     //   X,    Y,
     0, 0,
-    0.01, 0,
-    0.01, 0.01,
+    0.005, 0,
+    0.005, 0.005,
 
     0, 0,
-    0.01, 0.01,
-    0, 0.01,
+    0.005, 0.005,
+    0, 0.005,
 ]); 
 
 const buf = device.createBuffer({
@@ -55,16 +55,24 @@ const particleStorage = [
 ];
   
 
+
+var angleInc = Math.PI*2/AMOUNT;
+
 for (let i = 0; i < particleArray.length; i+=7) {
+
     particleArray[i] = Math.random()*2-1;   // X
     particleArray[i+1] = Math.random()*2-1; // Y
+    particleArray[i] = Math.cos(angleInc*i)*(window.innerHeight/window.innerWidth)*0.5;   // X
+    particleArray[i+1] = Math.sin(angleInc*i)*0.5; // Y
 
-    particleArray[i+2] = (Math.random()*2-1)*0.001;   // Force to X
-    particleArray[i+3] = (Math.random()*2-1)*0.001; // Force to Y
+    // particleArray[i+2] = 0;   // Force to X
+    // particleArray[i+3] = 0; // Force to Y
+    particleArray[i+2] = 0.0001;   // Force to X
+    particleArray[i+3] = -0.0015; // Force to Y
 
-    particleArray[i+4] = Math.random();   // R
-    particleArray[i+5] = Math.random();   // G
-    particleArray[i+6] = Math.random();   // B
+    particleArray[i+4] = 0.1;   // R
+    particleArray[i+5] = 0.1;   // G
+    particleArray[i+6] = (i%256 / 256); // B
 
 
 
@@ -183,6 +191,15 @@ const simulationShaderModule = device.createShaderModule({
         out[index*7] += out[index*7+2]; // add force to x
         out[index*7+1] += out[index*7+3]; // add force to y
 
+        if(out[index*7] > 1 || out[index*7]<-1){
+          out[index*7+2] *= -1;
+        }
+
+        if(out[index*7+1] > 1 || out[index*7+1] < -1){
+          out[index*7+3] *= -1;
+        }
+
+
       }
       
     }
@@ -290,3 +307,26 @@ setInterval(draw, 1000/60);
 
 
 
+// canvas.addEventListener("click",(ev) => {
+
+//   let x = ev.offsetX/window.innerWidth*2 -1;
+//   let y = ev.offsetY/window.innerHeight*2 -1;
+  
+//   for (let i = 0; i < particleArray.length; i+=7) {
+
+//     // particleArray[i+2] = (Math.random()*2-1)*0.001;   // Force to X
+//     // particleArray[i+3] = (Math.random()*2-1)*0.001; // Force to Y
+//     var dx = x - particleArray[i];
+//     var dy = y - particleArray[i+1]; 
+
+//     particleArray[i+2] -= (dx)*0.001;   // Force to X
+//     particleArray[i+3] -= (dy)*0.001; // Force to Y
+
+
+
+//   }
+//   device.queue.writeBuffer(particleStorage[0], 0, particleArray);
+//   device.queue.writeBuffer(particleStorage[1], 0, particleArray);
+
+
+// });
