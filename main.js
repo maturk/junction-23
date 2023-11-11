@@ -24,13 +24,19 @@ const data = new Float32Array(num_points * 2) // x,y
 for (let i = 0; i < 100; i++) {
     data[i] = Math.random() * 2 - 1;
 }
-const dataBuffer = device.createBuffer({
-    label: "point locations",
-    size: data.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-});
-// move locations to gpu
-device.queue.writeBuffer(dataBuffer, /*bufferOffset=*/0, data);
+
+const particleBuffers = new Array(2);
+for (let i = 0; i < 2; ++i) {
+    particleBuffers[i] = device.createBuffer({
+        size: data.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
+        mappedAtCreation: true,
+    });
+    new Float32Array(particleBuffers[i].getMappedRange()).set(
+        data
+    );
+    particleBuffers[i].unmap();
+}
 
 // tell gpu how locations are formatted in gpu
 const dataBufferLayout = {
@@ -147,14 +153,14 @@ function draw() {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
             loadOp: "clear",
-            clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
+            clearValue: { r: 0, g: 0, b: 0.4, a: 1 },
             storeOp: "store",
         }],
     });
 
     // Draw the points
     pass.setPipeline(renderPipeline);
-    pass.setVertexBuffer(0, dataBuffer);
+    pass.setVertexBuffer(0, particleBuffers[1]);
     pass.setVertexBuffer(1, vertexBuffer);
     pass.draw(3, num_points, 0, 0);
 
