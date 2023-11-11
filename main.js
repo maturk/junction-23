@@ -232,12 +232,13 @@ const vertexBufferData = new Float32Array([
     //0.01, -0.02,
     //0.0, 0.02,
     0, 0,
-    0.01, 0,
-    0.01, 0.01,
+    0.005, 0,
+    0.005, 0.005,
 
     0, 0,
-    0.01, 0.01,
-    0, 0.01,
+    0.005, 0.005,
+    0, 0.005,
+
 ]);
 
 const spriteVertexBuffer = device.createBuffer({
@@ -266,11 +267,24 @@ function updateSimParams() {
 updateSimParams();
 
 const initialParticleData = new Float32Array(numParticles * 4);
+var angleInc = Math.PI * 2 / numParticles;
+
 for (let i = 0; i < numParticles; ++i) {
-    initialParticleData[4 * i + 0] = 2 * (Math.random() - 0.5); // x
-    initialParticleData[4 * i + 1] = 2 * (Math.random() - 0.5); // y
+    //const angle = (i / numParticles) * 2 * Math.PI;
+    //const radius = 0.5 + 0.5 * Math.sin(6 * angle);
+
+    //initialParticleData[4 * i + 0] = radius * Math.cos(angle); // x
+    //initialParticleData[4 * i + 1] = radius * Math.sin(angle); // y
+
+    const t = (i / numParticles) * 2 - 1; // Map t to the range [-1, 1]
+    const x = t;
+    const y = 0.5 * Math.sin(4 * Math.PI * t) + 0.5 * Math.sin(12 * Math.PI * t);
+
+    initialParticleData[4 * i + 0] = x; // x
+    initialParticleData[4 * i + 1] = y; // y
+
     initialParticleData[4 * i + 2] = 0.001; // vel x
-    initialParticleData[4 * i + 3] = 0.001; // vel y
+    initialParticleData[4 * i + 3] = 0.0001; // vel y
 }
 
 const particleBuffers = new Array(2);
